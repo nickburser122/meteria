@@ -13,7 +13,7 @@ Vanilla JS spreadsheet for drug records. Entry: `index.html` (`css/style.css`, `
 - Arabic-Indic digits and the Arabic decimal and thousands separators are read as numbers.
 - Print & export: rows per page, cumulative sum Off / Running (Σ column per row) / Page end (page total + cumulative), choice of summed columns, page preview, native print, .xlsx via SheetJS CDN.
 - The ledger title is the print heading, the .xlsx file name and the tab title.
-- Favicon is baked into `index.html`: an inline SVG (scalable) and an inline multi-size .ico (16, 32, 48), a capsule in the brand colours. No extra files.
+- Favicon is baked into `index.html`: an inline SVG (scalable) and an inline multi-size .ico (16, 32, 48), the header ring mark on a dark tile. No extra files.
 
 ## Libraries
 - SheetJS `xlsx@0.18.5` from jsDelivr, used only for .xlsx export.
