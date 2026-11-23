@@ -553,6 +553,323 @@
     XLSX.writeFile(wb, (txt(S.title) || 'drug-ledger').replace(/[\\/:*?"<>|]+/g, ' ') + '.xlsx');
   });
 
+  /* ---------- theme: system default / light / dark ---------- */
+  const TKEY = 'materia.theme', mq = matchMedia('(prefers-color-scheme: dark)'), themeBtn = $('#themeBtn');
+  const TH = {
+    system: ['System default', '<svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 13.5h4M8 11v2.5"/></svg>'],
+    light: ['Light', '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/></svg>'],
+    dark: ['Dark', '<svg viewBox="0 0 16 16"><path d="M13.5 9.3A5.8 5.8 0 0 1 6.7 2.5a5.8 5.8 0 1 0 6.8 6.8Z"/></svg>']
+  };
+  let pref = 'system';
+  try { pref = localStorage.getItem(TKEY) || 'system'; } catch {}
+  function applyTheme() {
+    if (!TH[pref]) pref = 'system';
+    document.documentElement.dataset.theme = pref === 'dark' || (pref === 'system' && mq.matches) ? 'dark' : 'light';
+    themeBtn.innerHTML = TH[pref][1];
+    themeBtn.title = `Theme: ${TH[pref][0]}`;
+    themeBtn.setAttribute('aria-label', `Theme: ${TH[pref][0]}. Click to change`);
+  }
+  mq.addEventListener('change', applyTheme);
+  addEventListener('storage', e => { if (e.key === TKEY) { pref = e.newValue; applyTheme(); } });
+  themeBtn.addEventListener('click', () => {
+    const o = Object.keys(TH);
+    pref = o[(o.indexOf(pref) + 1) % o.length];
+    try { localStorage.setItem(TKEY, pref); } catch {}
+    applyTheme();
+    toast(`Theme: ${TH[pref][0]}`);
+  });
+  applyTheme();
+
+  /* ---------- smart workbook import ---------- */
+  const SYN = {
+    idn: ['id no', 'id number', 'id', 'no', 'number', 'item no', 'item number', 'code', 'item code', 'drug code', 'serial', 'serial no', 'sn', 'رقم', 'الرقم', 'رقم الصنف', 'التسلسل', 'رمز', 'الرمز', 'كود'],
+    idv: ['id vol', 'vol', 'volume', 'id volume', 'book', 'page', 'folio', 'المجلد', 'مجلد', 'رقم المجلد', 'الصفحة', 'صفحة'],
+    name: ['name', 'drug', 'drug name', 'item', 'item name', 'medicine', 'medicine name', 'medication', 'product', 'product name', 'description', 'generic name', 'trade name', 'material', 'الاسم', 'اسم', 'اسم الدواء', 'الدواء', 'المادة', 'اسم المادة', 'الصنف', 'اسم الصنف', 'البيان'],
+    cls: ['class', 'category', 'drug class', 'therapeutic class', 'group', 'type', 'الفئة', 'التصنيف', 'الصنف الدوائي', 'المجموعة', 'النوع'],
+    bud: ['budget class', 'budget', 'budget category', 'budget line', 'budget type', 'fund', 'account', 'الميزانية', 'بند الميزانية', 'تصنيف الميزانية', 'الموازنة', 'البند'],
+    price: ['price', 'unit price', 'cost', 'unit cost', 'rate', 'السعر', 'سعر', 'سعر الوحدة', 'التكلفة', 'الكلفة'],
+    stock: ['stock', 'qty', 'quantity', 'balance', 'on hand', 'in stock', 'available', 'inventory', 'الرصيد', 'المخزون', 'الكمية', 'المتوفر'],
+    exp: ['expended', 'expenditure', 'consumed', 'consumption', 'used', 'issued', 'dispensed', 'spent', 'المصروف', 'الصرف', 'المنصرف', 'المستهلك', 'الاستهلاك']
+  };
+  const hn = s => norm(s).replace(/[\u064B-\u0652\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const isNum = v => typeof v === 'number' || /^-?[\d٠-٩][\d٠-٩.,٫٬\s]*$/.test(txt(v).replace(/^[^\d٠-٩-]{1,4}|[^\d٠-٩]{1,4}$/g, ''));
+  const TOT = /^((grand|sub|page) ?)?totals?$|^cumulative$|^(ال)?(مجموع|اجمالي)/;
+  const fields = () => COLS.map(c => ({ k: c.k, top: [...new Set([hn(c.label), hn(S.labels[c.k])])].filter(Boolean), alt: SYN[c.k].map(hn) }));
+  const imp = $('#imp'), X = { sheets: [], si: 0, best: 0, mode: 'append', dedupe: true, carry: false, out: [], file: '', F: [] };
+  const cur = () => X.sheets[X.si];
+  const noXLSX = () => !window.XLSX && (toast('The spreadsheet engine could not load — check your connection.'), true);
+
+  function lev(a, b) {
+    if (Math.abs(a.length - b.length) > 2) return 9;
+    let p = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const c = [i];
+      for (let j = 1; j <= b.length; j++) c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] !== b[j - 1]));
+      p = c;
+    }
+    return p[b.length];
+  }
+
+  // 110 = the ledger's own label, 100 = exact synonym, 55–95 = synonym inside a longer header, 70 = typo
+  function hScore(h, f) {
+    if (!h) return 0;
+    if (f.top.includes(h)) return 110;
+    let best = 0;
+    for (const s of f.alt) {
+      const v = h === s ? 100 : ` ${h} `.includes(` ${s} `) ? 55 + 40 * s.length / h.length : s.length > 4 && h.length > 4 && lev(h, s) <= (s.length > 7 ? 2 : 1) ? 70 : 0;
+      if (v > best) best = v;
+    }
+    return best;
+  }
+
+  function stats(aoa, from, nc) {
+    const st = Array.from({ length: nc }, () => ({ n: 0, num: 0, dec: 0, seq: 0, len: 0, set: new Set(), ex: '' }));
+    for (let i = from; i < Math.min(aoa.length, from + 300); i++) {
+      for (let c = 0; c < nc; c++) {
+        const v = aoa[i][c], t = txt(v);
+        if (!t) continue;
+        const s = st[c];
+        if (!s.ex) s.ex = t;
+        s.n++; s.len += t.length; s.set.add(norm(t));
+        if (isNum(v)) { const x = num(v); s.num++; if (x % 1) s.dec++; if (x === s.prev + 1) s.seq++; s.prev = x; }
+      }
+    }
+    return st;
+  }
+
+  function mapCols(head, st, F) {
+    const cand = [];
+    head.forEach((h, c) => {
+      const raw = txt(h);
+      if (!raw || raw[0] === 'Σ') return;
+      const n = hn(raw), s = st && st[c] && st[c].n ? st[c] : null;
+      for (const f of F) {
+        let v = hScore(n, f);
+        if (v && s) {
+          const nr = s.num / s.n, cn = col(f.k).num;
+          if (cn ? nr < .5 : nr > .6 && f.k[0] !== 'i') v -= 60;
+          if (f.k === 'idn' && v < 110 && s.n > 2 && s.seq >= (s.n - 1) * .9) v -= 60;
+        }
+        if (v >= 50) cand.push({ k: f.k, c, v });
+      }
+    });
+    cand.sort((a, b) => b.v - a.v || a.c - b.c);
+    const map = {}, conf = {}, used = new Set();
+    const take = (k, c, v) => { map[k] = c; conf[k] = v; used.add(c); };
+    for (const x of cand) if (!(x.k in map) && !used.has(x.c)) take(x.k, x.c, x.v);
+    if (st) {
+      const bestOf = fn => { let b = -1, bv = 0; st.forEach((s, c) => { const v = s.n && !used.has(c) ? fn(s) : 0; if (v > bv) { bv = v; b = c; } }); return b; };
+      if (!('name' in map)) { const c = bestOf(s => (s.num / s.n < .3 && s.len / s.n > 2 ? Math.min(40, s.len / s.n) * s.set.size / s.n : 0)); if (c >= 0) take('name', c, 30); }
+      if (!('price' in map)) { const c = bestOf(s => (s.num / s.n > .8 && s.dec / s.num > .3 ? s.dec / s.num : 0)); if (c >= 0) take('price', c, 30); }
+    }
+    return { map, conf, total: Object.values(conf).reduce((a, b) => a + b, 0) };
+  }
+
+  function analyze(sh, force) {
+    const a = sh.aoa, F = X.F;
+    let hdr = force;
+    if (hdr == null) {
+      let bv = 0;
+      hdr = 0;
+      for (let i = 0; i < Math.min(a.length, 30); i++) {
+        const m = mapCols(a[i], null, F), cs = Object.values(m.conf);
+        if (cs.length < 2 && !(cs[0] >= 100)) continue;
+        const v = m.total + ('name' in m.map ? 40 : 0);
+        if (v > bv) { bv = v; hdr = i + 1; }
+      }
+    }
+    hdr = Math.min(hdr, a.length);
+    sh.hdr = hdr;
+    sh.nc = a.slice(0, 300).reduce((m, r) => Math.max(m, r.length), 0);
+    sh.st = stats(a, hdr, sh.nc);
+    const m = mapCols(hdr ? a[hdr - 1] : [], sh.st, F);
+    sh.map = m.map;
+    sh.conf = m.conf;
+    let n = 0, gaps = 0;
+    for (let i = hdr; i < a.length; i++) if (a[i].some(v => txt(v))) { n++; if (m.map.name != null && !txt(a[i][m.map.name])) gaps++; }
+    sh.n = n;
+    sh.gaps = gaps;
+    sh.score = n ? m.total + Math.min(n, 100) * .3 + (/ledger|drug|stock|inventor|item|medic|pharm|data|دواء|دوي|مخزون|صنف|صناف/i.test(sh.name) ? 10 : 0) - (/\bhow\b|help|read ?me|instruction|notes?\b|guide|summary|pivot|chart|cover|تعليمات|ملاحظات/i.test(sh.name) ? 25 : 0) - (sh.hidden ? 40 : 0) : -1;
+  }
+
+  const cell = (v, n) => {
+    if (typeof v === 'number') return String(+v.toPrecision(12));
+    const t = txt(v);
+    if (!n || !t) return t;
+    const m = t.replace(/[^\d٠-٩.,٫٬-]/g, '');
+    return /[\d٠-٩]/.test(m) ? m : t;
+  };
+
+  function build(sh) {
+    const m = sh.map, out = [], skip = { dup: 0, noname: 0, total: 0 };
+    if (m.name == null) return { out, skip };
+    const ks = COLS.filter(c => m[c.k] != null);
+    const have = X.dedupe && X.mode === 'append' ? new Set(S.rows.map(sig)) : null;
+    const hname = sh.hdr ? hn(sh.aoa[sh.hdr - 1][m.name]) : '';
+    let last = '';
+    for (let i = sh.hdr; i < sh.aoa.length; i++) {
+      const src = sh.aoa[i], r = {};
+      let any = false;
+      for (const c of ks) if ((r[c.k] = cell(src[m[c.k]], c.num))) any = true;
+      if (!any || (hname && hn(r.name) === hname)) continue;
+      if (TOT.test(hn(r.name || src.find(v => txt(v) && !isNum(v))))) { skip.total++; continue; }
+      if (r.name) last = r.name;
+      else if (X.carry && last) r.name = last;
+      else { skip.noname++; continue; }
+      const row = blank(r);
+      if (have && have.has(sig(row))) { skip.dup++; continue; }
+      out.push(row);
+    }
+    return { out, skip };
+  }
+
+  const colName = (sh, c) => {
+    const h = sh.hdr ? txt(sh.aoa[sh.hdr - 1][c]) : '';
+    return XLSX.utils.encode_col(c + sh.c0) + (h ? ' · ' + h : '');
+  };
+  const pickSheet = i => { X.si = i; const s = cur(); X.carry = !!s && s.gaps > s.n * .1; };
+
+  function impRender() {
+    const sh = cur(), go = $('#impGo');
+    $('#impBody').hidden = !sh;
+    $('#impName').textContent = sh ? `${X.file} · ${X.sheets.length} ${plural(X.sheets.length, 'sheet')} — choose another file` : 'or drop it anywhere on the page — .xlsx, .xls, .ods, .csv';
+    if (!sh) { go.disabled = true; go.textContent = 'Import'; return; }
+    $('#impSheets').innerHTML = X.sheets.map((s, i) => `<button class="chip" aria-pressed="${i === X.si}" data-si="${i}"${s.n ? '' : ' disabled'}><span dir="auto">${esc(s.name)}</span><small>${s.n ? s.n + ' ' + plural(s.n, 'row') : 'empty'}${i === X.best && X.sheets.length > 1 ? ' · best match' : ''}</small></button>`).join('');
+    $('#impHdr input').value = sh.hdr;
+    $('#impHdrHint').textContent = sh.hdr ? `Row ${sh.hdr} holds the column names; data starts on row ${sh.hdr + 1}.` : 'No header row — every row is treated as data.';
+    $('#impMap').innerHTML = COLS.map(c => {
+      const m = sh.map[c.k], cf = sh.conf[c.k];
+      const cl = m == null ? '' : cf === 'u' ? 'cu' : cf >= 100 ? 'c3' : cf >= 50 ? 'c2' : 'c1';
+      const opts = Array.from({ length: sh.nc }, (_, i) => `<option value="${i}"${m === i ? ' selected' : ''}>${esc(colName(sh, i))}</option>`).join('');
+      return `<label for="im-${c.k}"><i class="${cl}"></i>${esc(label(c))}${c.k === 'name' ? ' *' : ''}</label><select id="im-${c.k}" data-map="${c.k}"><option value="">— not in this file —</option>${opts}</select><small dir="auto">${m == null ? '' : esc(sh.st[m].ex || 'empty column')}</small>`;
+    }).join('');
+    $$('#impMode button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === X.mode));
+    $('#impDup').checked = X.dedupe;
+    $('#impDup').disabled = X.mode !== 'append';
+    $('#impCarry').checked = X.carry;
+    const { out, skip } = build(sh);
+    X.out = out;
+    const ks = COLS.filter(c => sh.map[c.k] != null);
+    $('#impPv').innerHTML = out.length
+      ? `<table><thead><tr>${ks.map(c => `<th class="${c.num ? 'n' : ''}">${esc(label(c))}</th>`).join('')}</tr></thead><tbody>${out.slice(0, 6).map(r => `<tr>${ks.map(c => `<td class="${c.num ? 'n' : ''}">${esc(r[c.k])}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+      : '<p class="hint">No rows to import with these settings.</p>';
+    const notes = [[skip.dup, 'already in the ledger'], [skip.noname, 'without a name'], [skip.total, plural(skip.total, 'total line')]].filter(x => x[0]).map(x => `${x[0]} ${x[1]}`);
+    $('#impInfo').innerHTML = sh.map.name == null
+      ? 'Choose which column holds the <b>name</b> to continue.'
+      : `<b>${out.length}</b> ${plural(out.length, 'row')} ready${notes.length ? ' · skipped: ' + notes.join(', ') : ''}${X.mode === 'replace' && S.rows.length ? ` · replaces the current <b>${S.rows.length}</b>` : ''}`;
+    go.disabled = !out.length;
+    go.textContent = out.length ? `Import ${out.length} ${plural(out.length, 'row')}` : 'Import';
+  }
+
+  async function readFile(f) {
+    if (!f || noXLSX()) return;
+    let wb;
+    try {
+      wb = /\.(csv|tsv|txt)$/i.test(f.name) ? XLSX.read(await f.text(), { type: 'string' }) : XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    } catch {
+      X.sheets = [];
+      impRender();
+      $('#impName').textContent = `${f.name} could not be read as a spreadsheet — try another file`;
+      return;
+    }
+    X.F = fields();
+    X.file = f.name;
+    X.sheets = wb.SheetNames.map((name, i) => {
+      const ws = wb.Sheets[name] || {};
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true, range: 0 });
+      while (aoa.length && !aoa[aoa.length - 1].some(v => txt(v))) aoa.pop();
+      const sh = { name, aoa, c0: ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.c : 0, hidden: !!wb.Workbook?.Sheets?.[i]?.Hidden };
+      analyze(sh);
+      return sh;
+    });
+    X.best = X.sheets.reduce((b, s, i, a) => (s.score > a[b].score ? i : b), 0);
+    pickSheet(X.best);
+    impRender();
+  }
+
+  const openImp = () => { if (!imp.open) { impRender(); imp.showModal(); } };
+  $('#impBtn').addEventListener('click', openImp);
+  $('#impX').addEventListener('click', () => imp.close());
+  $('#impCancel').addEventListener('click', () => imp.close());
+  $('#impDrop').addEventListener('click', () => $('#impFile').click());
+  $('#impFile').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
+  addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
+  addEventListener('drop', e => {
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    e.preventDefault();
+    openImp();
+    readFile(f);
+  });
+  imp.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) { if (e.target === imp) imp.close(); return; }
+    if (b.dataset.si) pickSheet(+b.dataset.si);
+    else if (b.dataset.m) X.mode = b.dataset.m;
+    else return;
+    impRender();
+  });
+  imp.addEventListener('change', e => {
+    const el = e.target, k = el.dataset.map, sh = cur();
+    if (!sh) return;
+    if (k) {
+      const c = el.value === '' ? null : +el.value;
+      for (const o of Object.keys(sh.map)) if (o === k || sh.map[o] === c) { delete sh.map[o]; delete sh.conf[o]; }
+      if (c != null) { sh.map[k] = c; sh.conf[k] = 'u'; }
+    } else if (el.id === 'impDup') X.dedupe = el.checked;
+    else if (el.id === 'impCarry') X.carry = el.checked;
+    else return;
+    impRender();
+  });
+  $('#impHdr').addEventListener('step', e => { const sh = cur(); if (sh) { analyze(sh, e.detail); impRender(); } });
+
+  $('#impGo').addEventListener('click', () => {
+    const out = X.out, sh = cur();
+    if (!sh || !out.length) return;
+    const snap = { rows: S.rows, on: { ...S.on } }, rep = X.mode === 'replace';
+    S.rows = rep ? out.slice() : S.rows.concat(out);
+    const by = new Map();
+    for (const r of S.rows) {
+      const n = norm(r.name);
+      if (!by.has(n)) by.set(n, {});
+      for (const f of ['cls', 'bud']) if (!by.get(n)[f] && txt(r[f])) by.get(n)[f] = r[f];
+    }
+    for (const r of out) for (const f of ['cls', 'bud']) if (!txt(r[f])) r[f] = by.get(norm(r.name))[f] || '';
+    for (const k of ['idn', 'idv']) if (out.some(r => txt(r[k]))) S.on[k] = true;
+    sort.k = null;
+    find.value = '';
+    save();
+    render();
+    imp.close();
+    X.sheets = [];
+    X.out = [];
+    const tr = trOf(out[0].id);
+    if (tr) tr.scrollIntoView({ block: 'center' });
+    flash(out.slice(0, 80).map(r => r.id));
+    toast(`${rep ? 'Replaced the ledger with' : 'Imported'} ${out.length} ${plural(out.length, 'row')} from “${sh.name}”`, 'Undo', () => { S.rows = snap.rows; S.on = snap.on; save(); render(); });
+  });
+
+  $('#tplBtn').addEventListener('click', () => {
+    if (noXLSX()) return;
+    const ex = (price, stock, used) => ['', '', 'Amoxicillin 500 mg caps', 'Antibiotic', 'Essential', price, stock, used];
+    const ws = XLSX.utils.aoa_to_sheet([COLS.map(c => label(c)), ex(0.12, 2400, 860), ex(0.14, 1200, 300)]);
+    ws['!cols'] = COLS.map(c => ({ wch: c.k === 'name' ? 34 : c.num ? 12 : 16 }));
+    const how = XLSX.utils.aoa_to_sheet([
+      'Materia import template',
+      '',
+      '1. Fill the "Ledger" sheet: one row per price. Repeat the name for every price you hold of the same drug.',
+      '2. Replace the two example rows with your own records.',
+      `3. ${label(COLS[0])} and ${label(COLS[1])} are optional — leave them empty or delete those columns.`,
+      '4. Column order and extra columns do not matter. Headers are matched by name (English or Arabic).',
+      '5. In Materia press Import, choose this file, review the sheet, the column matches and the preview, then import.'
+    ].map(t => [t]));
+    how['!cols'] = [{ wch: 110 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Ledger');
+    XLSX.utils.book_append_sheet(wb, how, 'How to');
+    XLSX.writeFile(wb, 'materia-template.xlsx');
+  });
+
   addEventListener('pagehide', flush);
   document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 

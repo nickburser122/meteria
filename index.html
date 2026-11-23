@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400..600&family=Geist:wght@400..600&display=swap" rel="stylesheet">
+<script>(function(){try{var p=localStorage.getItem('materia.theme')||'system';document.documentElement.dataset.theme=p==='dark'||(p!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'}catch(e){}})()</script>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -21,7 +22,9 @@
       <input id="find" placeholder="Filter" autocomplete="off" spellcheck="false" aria-label="Filter records">
     </label>
     <button class="btn ghost" id="colsBtn">Columns</button>
+    <button class="btn ghost" id="impBtn">Import</button>
     <button class="btn solid" id="outBtn">Print &amp; export</button>
+    <button class="btn ghost icb" id="themeBtn" aria-label="Theme"></button>
   </header>
 
   <section class="add" aria-label="Add records">
@@ -88,6 +91,49 @@
     <button class="btn solid" id="printBtn">Print</button>
   </div>
 </aside>
+
+<dialog class="imp" id="imp" aria-labelledby="impH">
+  <header>
+    <h2 id="impH">Import <em>workbook</em></h2>
+    <button class="ic" id="impX" aria-label="Close"><svg viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></svg></button>
+  </header>
+  <div class="ibody">
+    <button class="drop" id="impDrop"><b>Choose a workbook</b><span id="impName"></span></button>
+    <input type="file" id="impFile" accept=".xlsx,.xlsm,.xls,.ods,.csv" hidden>
+    <div class="isec" id="impBody" hidden>
+      <div class="fld"><span>Sheet</span><div class="chips" id="impSheets"></div></div>
+      <div class="fld">
+        <span>Header row</span>
+        <div class="line">
+          <div class="step" id="impHdr" data-min="0" data-max="60">
+            <button data-d="-1" tabindex="-1" aria-label="Earlier row">−</button>
+            <input value="1" inputmode="numeric" autocomplete="off" aria-label="Header row number">
+            <button data-d="1" tabindex="-1" aria-label="Later row">+</button>
+          </div>
+          <p class="hint" id="impHdrHint"></p>
+        </div>
+      </div>
+      <div class="fld">
+        <span>Columns</span>
+        <div class="maps" id="impMap"></div>
+        <p class="hint">Green: header matched · yellow: likely · red: guessed from the data · violet: set by you.</p>
+      </div>
+      <div class="fld">
+        <span>Rows</span>
+        <div class="seg two" id="impMode"><button data-m="append">Add to ledger</button><button data-m="replace">Replace ledger</button></div>
+        <label class="ck"><input type="checkbox" id="impDup"> Skip rows already in the ledger</label>
+        <label class="ck"><input type="checkbox" id="impCarry"> A blank name means the same drug as the row above</label>
+      </div>
+      <div class="fld"><span>Preview</span><div class="ipv" id="impPv"></div><p class="hint" id="impInfo"></p></div>
+    </div>
+  </div>
+  <footer class="iacts">
+    <button class="btn ghost" id="tplBtn">Download template</button>
+    <span></span>
+    <button class="btn ghost" id="impCancel">Cancel</button>
+    <button class="btn solid" id="impGo" disabled>Import</button>
+  </footer>
+</dialog>
 
 <div class="toast" id="toast" role="status"></div>
 <div id="print"></div>
