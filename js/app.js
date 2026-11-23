@@ -335,8 +335,8 @@
     $('#qHint').innerHTML = !n
       ? 'Type a name, set <b>×</b> to how many prices you hold, press <kbd>↵</kbd> — <kbd>↑</kbd> <kbd>↓</kbd> change ×'
       : ex.length
-        ? `<i style="--h:${hue(n)}"></i>Known · ${ex.length} ${plural(ex.length, 'row')}${meta ? ' · ' + esc(meta) : ''} — <b>${c}</b> more will join ${ex.length > 1 ? 'them' : 'it'}`
-        : `<i style="--h:${hue(n)}"></i>New drug — <b>${c}</b> ${plural(c, 'row')} will be created`;
+        ? `<i style="--h:${hue(n)}"></i>Known · ${ex.length} ${plural(ex.length, 'row')}${meta ? ' · ' + esc(meta) : ''} · adds <b>${c}</b>`
+        : `<i style="--h:${hue(n)}"></i>New · adds <b>${c}</b> ${plural(c, 'row')}`;
   }
 
   function addBatch() {
@@ -501,7 +501,7 @@
     const L = layout();
     $('#pInfo').innerHTML = L.count
       ? `<b>${L.count}</b> ${plural(L.count, 'row')} on <b>${L.pages.length}</b> ${plural(L.pages.length, 'page')}${norm(find.value) ? ' · filter applied' : ''}`
-      : 'Nothing to print yet.';
+      : 'Nothing to print.';
     const pv = $('#pv');
     pv.innerHTML = pageHTML(L, 0);
     pv.style.setProperty('--z', pv.clientWidth / 794);
@@ -536,25 +536,79 @@
   }
   addEventListener('beforeprint', fillPrint);
   $('#printBtn').addEventListener('click', () => {
-    if (!fillPrint()) return toast('Nothing to print yet.');
+    if (!fillPrint()) return toast('Nothing to print.');
     print();
   });
 
+  function summary(rows) {
+    const L = k => label(col(k)), qty = ['stock', 'exp'];
+    const heads = [...qty.map(L), ...qty.map(k => `${L('price')} × ${L(k)}`)];
+    const money = v => ({ t: 'n', v: r2(v), z: '#,##0.00' });
+    const bag = r => ({ r, rows: 0, names: new Set(), q: [0, 0], v: [0, 0] });
+    const add = (g, r) => {
+      const n = norm(r.name), p = num(r.price);
+      g.rows++;
+      if (n) g.names.add(n);
+      qty.forEach((k, i) => { g.q[i] += num(r[k]); g.v[i] += p * num(r[k]); });
+    };
+    const tail = g => [g.rows, ...g.q.map(r2), ...g.v.map(money)];
+    const group = k => {
+      const m = new Map();
+      for (const r of rows) {
+        const id = norm(r[k]);
+        if (!m.has(id)) m.set(id, bag(r));
+        add(m.get(id), r);
+      }
+      return [...m].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(x => x[1]);
+    };
+    const all = bag(), sigs = new Map();
+    for (const r of rows) {
+      add(all, r);
+      if (full(r)) sigs.set(sig(r), (sigs.get(sig(r)) || 0) + 1);
+    }
+    const twins = [...sigs.values()].reduce((a, n) => a + (n > 1 ? n : 0), 0);
+    const sums = tail(all), q = txt(find.value);
+    const aoa = [
+      [txt(S.title) || 'Drug ledger'],
+      ['Exported', new Date().toLocaleString()],
+      ...(q ? [['Filter', q]] : []),
+      [],
+      ['Records', all.rows],
+      ['Drugs', all.names.size],
+      ['Identical rows', twins],
+      ...heads.map((h, i) => [h, sums[i + 1]]),
+      []
+    ];
+    const section = (k, head, lead, total) => {
+      aoa.push([`By ${L(k).toLowerCase()}`], [...head, 'Rows', ...heads]);
+      group(k).forEach(g => aoa.push([...lead(g), ...tail(g)]));
+      aoa.push([...total, ...sums], []);
+    };
+    for (const k of ['cls', 'bud']) section(k, [L(k), '', 'Drugs'], g => [txt(g.r[k]) || '—', '', g.names.size], ['Total', '', all.names.size]);
+    section('name', [L('name'), L('cls'), L('bud')], g => [txt(g.r.name) || '—', txt(g.r.cls), txt(g.r.bud)], ['Total', '', '']);
+    return aoa;
+  }
+
+  const sheetOf = aoa => {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = Array.from({ length: Math.max(...aoa.map(r => r.length)) }, (_, i) => ({ wch: Math.min(42, aoa.reduce((m, r) => Math.max(m, String(r[i]?.v ?? r[i] ?? '').length), 5) + 2) }));
+    return ws;
+  };
+
   $('#xlsxBtn').addEventListener('click', () => {
-    if (!window.XLSX) return toast('The spreadsheet engine could not load — check your connection.');
+    if (noXLSX()) return;
     const L = layout();
-    if (!L.count) return toast('Nothing to export yet.');
+    if (!L.count) return toast('Nothing to export.');
     const aoa = [L.head.map(c => c.v)];
     L.pages.forEach(pg => [...pg.body, ...pg.foot].forEach(r => aoa.push(r.map(c => c.v))));
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = L.head.map((_, i) => ({ wch: Math.min(42, aoa.reduce((m, r) => Math.max(m, String(r[i] ?? '').length), 5) + 2) }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Ledger');
+    XLSX.utils.book_append_sheet(wb, sheetOf(aoa), 'Ledger');
+    XLSX.utils.book_append_sheet(wb, sheetOf(summary(shownRows())), 'Summary');
     XLSX.writeFile(wb, (txt(S.title) || 'drug-ledger').replace(/[\\/:*?"<>|]+/g, ' ') + '.xlsx');
+    spin();
   });
 
-  /* ---------- theme: system default / light / dark ---------- */
-  const TKEY = 'materia.theme', mq = matchMedia('(prefers-color-scheme: dark)'), themeBtn = $('#themeBtn');
+  const TKEY = 'materia.theme', mq = matchMedia('(prefers-color-scheme: dark)'), still = matchMedia('(prefers-reduced-motion: reduce)'), themeBtn = $('#themeBtn');
   const TH = {
     system: ['System default', '<svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 13.5h4M8 11v2.5"/></svg>'],
     light: ['Light', '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/></svg>'],
@@ -564,23 +618,57 @@
   try { pref = localStorage.getItem(TKEY) || 'system'; } catch {}
   function applyTheme() {
     if (!TH[pref]) pref = 'system';
-    document.documentElement.dataset.theme = pref === 'dark' || (pref === 'system' && mq.matches) ? 'dark' : 'light';
+    const dark = pref === 'dark' || (pref === 'system' && mq.matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    $('meta[name=theme-color]').content = dark ? '#17131d' : '#fbfaf6';
     themeBtn.innerHTML = TH[pref][1];
     themeBtn.title = `Theme: ${TH[pref][0]}`;
     themeBtn.setAttribute('aria-label', `Theme: ${TH[pref][0]}. Click to change`);
   }
-  mq.addEventListener('change', applyTheme);
+  mq.addEventListener('change', () => { applyTheme(); drawIcon(); });
   addEventListener('storage', e => { if (e.key === TKEY) { pref = e.newValue; applyTheme(); } });
   themeBtn.addEventListener('click', () => {
     const o = Object.keys(TH);
     pref = o[(o.indexOf(pref) + 1) % o.length];
     try { localStorage.setItem(TKEY, pref); } catch {}
-    applyTheme();
-    toast(`Theme: ${TH[pref][0]}`);
+    if (document.startViewTransition && !still.matches) document.startViewTransition(applyTheme);
+    else applyTheme();
   });
   applyTheme();
 
-  /* ---------- smart workbook import ---------- */
+  const ico = $('link[rel~=icon]'), cv = document.createElement('canvas');
+  const RING = { light: ['#f0624a', '#f0b429', '#2bb389', '#7a6ee6'], dark: ['#ff8a73', '#ffd872', '#5edcb2', '#a99fff'] };
+  let spinQ = 0;
+  cv.width = cv.height = 64;
+
+  function drawIcon(turn = 0) {
+    const g = cv.getContext('2d');
+    if (!g || !g.createConicGradient) return;
+    const c = RING[mq.matches ? 'dark' : 'light'], cg = g.createConicGradient((120 + turn * 360) * Math.PI / 180, 32, 32);
+    [...c, c[0]].forEach((x, i) => cg.addColorStop(i / 4, x));
+    g.clearRect(0, 0, 64, 64);
+    g.beginPath();
+    g.arc(32, 32, 21, 0, Math.PI * 2);
+    g.lineWidth = 14;
+    g.strokeStyle = cg;
+    g.stroke();
+    ico.href = cv.toDataURL();
+  }
+
+  function spin() {
+    if (still.matches) return drawIcon();
+    if (spinQ) return;
+    const t0 = performance.now();
+    let last = 0;
+    const tick = t => {
+      const p = Math.min(1, Math.max(0, (t - t0) / 900));
+      if (p === 1 || t - last > 40) { last = t; drawIcon(1 - (1 - p) ** 3); }
+      spinQ = p < 1 ? requestAnimationFrame(tick) : 0;
+    };
+    spinQ = requestAnimationFrame(tick);
+  }
+  spin();
+
   const SYN = {
     idn: ['id no', 'id number', 'id', 'no', 'number', 'item no', 'item number', 'code', 'item code', 'drug code', 'serial', 'serial no', 'sn', 'رقم', 'الرقم', 'رقم الصنف', 'التسلسل', 'رمز', 'الرمز', 'كود'],
     idv: ['id vol', 'vol', 'volume', 'id volume', 'book', 'page', 'folio', 'المجلد', 'مجلد', 'رقم المجلد', 'الصفحة', 'صفحة'],
@@ -597,7 +685,7 @@
   const fields = () => COLS.map(c => ({ k: c.k, top: [...new Set([hn(c.label), hn(S.labels[c.k])])].filter(Boolean), alt: SYN[c.k].map(hn) }));
   const imp = $('#imp'), X = { sheets: [], si: 0, best: 0, mode: 'append', dedupe: true, carry: false, out: [], file: '', F: [] };
   const cur = () => X.sheets[X.si];
-  const noXLSX = () => !window.XLSX && (toast('The spreadsheet engine could not load — check your connection.'), true);
+  const noXLSX = () => !window.XLSX && (toast('The spreadsheet engine could not load.'), true);
 
   function lev(a, b) {
     if (Math.abs(a.length - b.length) > 2) return 9;
@@ -610,7 +698,6 @@
     return p[b.length];
   }
 
-  // 110 = the ledger's own label, 100 = exact synonym, 55–95 = synonym inside a longer header, 70 = typo
   function hScore(h, f) {
     if (!h) return 0;
     if (f.top.includes(h)) return 110;
@@ -846,6 +933,7 @@
     const tr = trOf(out[0].id);
     if (tr) tr.scrollIntoView({ block: 'center' });
     flash(out.slice(0, 80).map(r => r.id));
+    spin();
     toast(`${rep ? 'Replaced the ledger with' : 'Imported'} ${out.length} ${plural(out.length, 'row')} from “${sh.name}”`, 'Undo', () => { S.rows = snap.rows; S.on = snap.on; save(); render(); });
   });
 
@@ -876,4 +964,5 @@
   render();
   hint();
   qName.focus();
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
